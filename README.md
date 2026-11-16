@@ -63,7 +63,12 @@ _✨ 起司链接解析器 ✨_
 
 ## 💿 安装
 
-直接在astrbot的插件市场搜索astrbot_plugin_parser，点击安装，等待完成即可
+本插件是二次开发版本，未上架插件市场，请任选一种方式安装：
+
+1. **压缩包**：将项目目录打包为 zip，在 AstrBot 面板「插件 → 从文件安装」中选择该 zip
+2. **链接**：在「从链接安装」中填入 `https://github.com/BoboCheese74/astrbot_plugin_cheese_parser`
+
+> 注意：插件目录名固定为 `astrbot_plugin_cheese_parser`，不要与原版 `astrbot_plugin_parser` 混装，两者会争抢同一批链接。
 
 ## ⚙️ 配置
 
