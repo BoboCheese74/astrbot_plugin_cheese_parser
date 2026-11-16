@@ -101,13 +101,13 @@ class BilibiliParser(BaseParser):
 
     @handle(
         "bm",
-        r"^bm\s*(?:(?P<bvid>BV[0-9a-zA-Z]{10})"
+        r"^bm\s*.*?(?:(?P<bvid>BV[0-9a-zA-Z]{10})"
         r"|(?P<avid>av\d{6,})"
         r"|(?P<url>(?:https?://)?[\w.-]*(?:b23\.tv|bili2233\.cn|bilibili\.com)/\S*))"
         r"(?:\s+(?P<page_num>\d{1,3}))?",
     )
     async def _parse_bm(self, searched: Match[str]):
-        """bm 指令提取音频: 支持 BV 号 / av 号 / 视频链接(含短链、分P)"""
+        """bm 指令提取音频: 支持 BV 号 / av 号 / 视频链接(含短链、分P) / 客户端复制分享文案"""
         bvid = searched.group("bvid")
         avid = int(searched.group("avid")[2:]) if searched.group("avid") else None
         page_num = int(searched.group("page_num") or 1)
