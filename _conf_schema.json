@@ -634,6 +634,28 @@
                     }
                 }
             },
+            "jmcomic": {
+                "name": "JMComic 解析器（未实现）",
+                "items": {
+                    "enable": {
+                        "description": "启用",
+                        "hint": "解析器尚未实现，启用后不会生效。此项仅用于兼容旧版本已保存的配置。",
+                        "type": "bool",
+                        "default": false
+                    },
+                    "use_proxy": {
+                        "description": "使用代理",
+                        "type": "bool",
+                        "default": false
+                    },
+                    "cookies": {
+                        "description": "Cookies",
+                        "hint": "选填",
+                        "type": "text",
+                        "default": ""
+                    }
+                }
+            },
             "metube": {
                 "name": "Metube 解析器",
                 "items": {
