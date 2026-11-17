@@ -180,7 +180,8 @@ class ParserPlugin(Star):
         # 核心匹配逻辑 ：关键词 + 正则双重判定，汇集了所有解析器的正则对。
         keyword: str = ""
         searched: re.Match[str] | None = None
-        # 前缀指令优先, 避免 bm 后面的 b23.tv / BV 等关键词把指令抢走
+
+        # 优先匹配 bm 关键字
         if "bm" in text:
             for kw, pat in self.key_pattern_list:
                 if kw != "bm":
@@ -189,6 +190,7 @@ class ParserPlugin(Star):
                     keyword, searched = kw, m
                     break
 
+        # 如果没有匹配到 bm，再匹配其他
         if searched is None:
             for kw, pat in self.key_pattern_list:
                 if kw not in text:

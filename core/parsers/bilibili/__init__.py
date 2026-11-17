@@ -1,6 +1,5 @@
 import asyncio
-from pathlib import Path
-from re import IGNORECASE, Match, search
+from re import Match, search
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -13,8 +12,7 @@ from astrbot.api import logger
 
 from ...config import PluginConfig
 from ...data import ImageContent, MediaContent, Platform, SendGroup
-from ...exception import DownloadException, DurationLimitException, RedirectException
-from ...utils import transcode_audio_to_mp3
+from ...exception import DownloadException, DurationLimitException
 from ..base import (
     BaseParser,
     Downloader,
@@ -99,69 +97,59 @@ class BilibiliParser(BaseParser):
 
         return await self.parse_video(bvid=bvid, page_num=page_num)
 
-    @handle(
-        "bm",
-        r"^bm\s*.*?(?:(?P<bvid>BV[0-9a-zA-Z]{10})"
-        r"|(?P<avid>av\d{6,})"
-        r"|(?P<url>(?:https?://)?[\w.-]*(?:b23\.tv|bili2233\.cn|bilibili\.com)/\S*))"
-        r"(?:\s+(?P<page_num>\d{1,3}))?",
-    )
+    @handle("bm", r"^bm\s*(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s(?P<page_num>\d{1,3}))?$")
+    @handle("bm", r"bm.*?https?://b23\.tv/[A-Za-z\d\._?%&+\-=/#]+")
+    @handle("bm", r"bm.*?https?://bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+")
+    @handle("bm", r"bm.*?https?://(?:www\.)?bilibili\.com/video/(?:BV[0-9a-zA-Z]{10}|av\d{6,})")
     async def _parse_bm(self, searched: Match[str]):
-        """bm 指令提取音频: 支持 BV 号 / av 号 / 视频链接(含短链、分P) / 客户端复制分享文案"""
-        bvid = searched.group("bvid")
-        avid = int(searched.group("avid")[2:]) if searched.group("avid") else None
-        page_num = int(searched.group("page_num") or 1)
+        """解析 bm 指令（支持 BV号、短链、长链）"""
+        matched_text = searched.group(0)
 
-        if link := searched.group("url"):
-            # 短链先还原成真实链接
-            if "b23.tv" in link or "bili2233.cn" in link:
-                try:
-                    link = await self._resolve_short_link(link)
-                except RedirectException as e:
-                    raise ParseException(f"短链还原失败: {link}") from e
-            if m := search(r"BV[0-9a-zA-Z]{10}", link):
-                bvid, avid = m.group(0), None
-            elif m := search(r"av(\d{6,})", link, IGNORECASE):
-                bvid, avid = None, int(m.group(1))
+        # 判断是 BV 号格式还是 URL 格式
+        if matched_text.startswith("bmBV"):
+            # BV 号格式
+            import re as re_module
+
+            bv_match = re_module.match(r"bm(BV[0-9a-zA-Z]{10})", matched_text)
+            if not bv_match:
+                raise ParseException("无法从指令中提取 BV 号")
+            bvid = bv_match.group(1)
+            # 检查是否有页码
+            page_match = re_module.search(r"\s(\d{1,3})$", matched_text)
+            page = int(page_match.group(1)) if page_match else 1
+        else:
+            # URL 格式，提取 URL
+            url_match = search(r"https?://[A-Za-z\d\._?%&+\-=/#]+", matched_text)
+            if not url_match:
+                raise ParseException("无法从指令中提取 URL")
+            url = url_match.group(0)
+
+            # 判断是短链还是长链，提取 BV 号
+            if "b23.tv" in url or "bili2233.cn" in url:
+                # 短链需要重定向
+                redirect_url = await self.get_redirect_url(url, headers=self.headers)
+                bv_pattern = r"BV[0-9a-zA-Z]{10}"
+                bv_match = search(bv_pattern, redirect_url)
             else:
-                raise ParseException("无法从链接中提取 BV/AV 号")
-            # 链接里的 ?p= 分P 优先
-            if p := search(r"[?&]p=(\d{1,3})", link):
-                page_num = int(p.group(1))
+                # 长链直接提取 BV 号
+                bv_pattern = r"BV[0-9a-zA-Z]{10}"
+                bv_match = search(bv_pattern, url)
 
-        _, a_url = await self.extract_download_urls(bvid=bvid, avid=avid, page_index=page_num - 1)
+            if not bv_match:
+                raise ParseException("无法从链接中提取 BV 号")
+            bvid = bv_match.group(0)
+            page = 1
+
+        # 提取音频
+        _, a_url = await self.extract_download_urls(bvid=bvid, page_index=page - 1)
         if not a_url:
             raise ParseException("未找到音频链接")
-
-        async def download_mp3() -> Path:
-            src = await self.downloader.download_audio(a_url, headers=self.headers, proxy=self.proxy)
-            return await transcode_audio_to_mp3(src)
-
-        video_id = bvid or f"av{avid}"
-        page_url = f"https://www.bilibili.com/video/{video_id}"
-        if page_num > 1:
-            page_url += f"?p={page_num}"
-
+        audio = self.create_audio_content(a_url, to_mp3=True)
         return self.result(
-            title=f"BiliBili_audio_{video_id}",
-            contents=[self.create_audio_content(asyncio.create_task(download_mp3()))],
-            url=page_url,
+            title=f"BiliBili_audio_{bvid}",
+            contents=[audio],
+            url=a_url,
         )
-
-    async def _resolve_short_link(self, url: str, max_hops: int = 5) -> str:
-        """逐跳读取 302 的 Location 还原短链
-
-        不能直接用 allow_redirects=True 跟随：b23.tv 最终会落到视频页 HTML，
-        未登录的裸请求会被 B 站风控拦成 412 Precondition Failed。
-        """
-        for _ in range(max_hops):
-            nxt = await self.get_redirect_url(url, headers=self.headers)
-            if not nxt or nxt == url:
-                break
-            url = nxt
-            if search(r"BV[0-9a-zA-Z]{10}", url) or search(r"av\d{6,}", url, IGNORECASE):
-                break
-        return url
 
     @handle("av", r"^av(?P<avid>\d{6,})(?:\s)?(?P<page_num>\d{1,3})?$")
     @handle(

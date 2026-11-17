@@ -4,6 +4,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
+import hashlib
+from urllib.parse import urlparse
 import aiofiles
 import yt_dlp
 from aiohttp import ClientError, ClientSession, ClientTimeout
@@ -21,7 +23,7 @@ from .exception import (
     SizeLimitException,
     ZeroSizeException,
 )
-from .utils import LimitedSizeDict, generate_file_name, merge_av, safe_unlink
+from .utils import LimitedSizeDict, exec_ffmpeg_cmd, generate_file_name, merge_av, safe_unlink
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -72,9 +74,7 @@ class Downloader:
         # 视频信息缓存
         self.info_cache: LimitedSizeDict[str, VideoInfo] = LimitedSizeDict()
         # 用于流式下载的客户端
-        self.client = ClientSession(
-            timeout=ClientTimeout(total=self.cfg.download_timeout)
-        )
+        self.client = ClientSession(timeout=ClientTimeout(total=self.cfg.download_timeout))
 
     async def close(self):
         """关闭网络客户端"""
@@ -100,9 +100,7 @@ class Downloader:
         retries = self.cfg.download_retry_times
         for attempt in range(retries + 1):
             try:
-                async with self.client.get(
-                    url, headers=headers, allow_redirects=True, proxy=proxy
-                ) as response:
+                async with self.client.get(url, headers=headers, allow_redirects=True, proxy=proxy) as response:
                     if response.status >= 400:
                         raise ClientError(f"HTTP {response.status} {response.reason}")
                     content_length = response.content_length
@@ -120,9 +118,7 @@ class Downloader:
                     downloaded = 0
                     with self.get_progress_bar(file_name, content_length) as bar:
                         async with aiofiles.open(file_path, "wb") as file:
-                            async for chunk in response.content.iter_chunked(
-                                1024 * 1024
-                            ):
+                            async for chunk in response.content.iter_chunked(1024 * 1024):
                                 downloaded += len(chunk)
                                 if downloaded > max_bytes:
                                     raise SizeLimitException
@@ -133,9 +129,7 @@ class Downloader:
                         logger.warning(f"媒体 url: {url}, 实际大小为 0, 取消下载")
                         raise ZeroSizeException
                     if content_length and downloaded < content_length:
-                        raise ClientError(
-                            f"HTTP payload incomplete {downloaded}/{content_length}"
-                        )
+                        raise ClientError(f"HTTP payload incomplete {downloaded}/{content_length}")
 
                 return file_path
             except (ZeroSizeException, SizeLimitException):
@@ -182,9 +176,7 @@ class Downloader:
     ) -> Path:
         if video_name is None:
             video_name = generate_file_name(url, ".mp4")
-        return await self.streamd(
-            url, file_name=video_name, headers=headers, proxy=proxy
-        )
+        return await self.streamd(url, file_name=video_name, headers=headers, proxy=proxy)
 
     @auto_task
     async def download_audio(
@@ -194,12 +186,52 @@ class Downloader:
         audio_name: str | None = None,
         headers: dict[str, str] | None = None,
         proxy: str | None = None,
+        to_mp3: bool = False,
     ) -> Path:
+        url_suffix = Path(urlparse(url).path).suffix.lower()
+
+        # 不转码（视频合并走这条），或源本身就是 mp3 → 直接下载
+        if not to_mp3 or url_suffix == ".mp3":
+            name = audio_name or generate_file_name(url, ".mp3")
+            return await self.streamd(url, file_name=name, headers=headers, proxy=proxy)
+
+        # 生成最终的 mp3 文件名（强制使用 .mp3 扩展名）
         if audio_name is None:
-            audio_name = generate_file_name(url, ".mp3")
-        return await self.streamd(
-            url, file_name=audio_name, headers=headers, proxy=proxy
-        )
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:16]
+            audio_name = f"{url_hash}.mp3"
+        mp3_path = self.cfg.cache_dir / audio_name
+
+        # 缓存命中：转过就不再下、不再转
+        if mp3_path.exists() and mp3_path.stat().st_size > 0:
+            return mp3_path
+
+        # 生成临时文件名（使用原始扩展名或 .m4s）
+        temp_path = mp3_path.with_suffix(".src.m4s")
+
+        # 下载音频到临时文件
+        await self.streamd(url, file_name=temp_path.name, headers=headers, proxy=proxy)
+
+        # 使用 ffmpeg 转换为 mp3
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(temp_path),
+            "-vn",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            str(mp3_path),
+        ]
+        try:
+            await exec_ffmpeg_cmd(cmd)
+        except RuntimeError as e:
+            logger.warning(f"音频转码失败，回退原始文件: {e}")
+            await safe_unlink(mp3_path)  # 清掉可能的半成品
+            return temp_path  # 失败时保留 temp
+        await safe_unlink(temp_path)
+        return mp3_path
 
     @auto_task
     async def download_file(
@@ -212,9 +244,7 @@ class Downloader:
     ) -> Path:
         if file_name is None:
             file_name = generate_file_name(url, ".zip")
-        return await self.streamd(
-            url, file_name=file_name, headers=headers, proxy=proxy
-        )
+        return await self.streamd(url, file_name=file_name, headers=headers, proxy=proxy)
 
     @auto_task
     async def download_img(
@@ -330,9 +360,7 @@ class Downloader:
         format: str | None = None,
         node: bool = False,
     ) -> Path:
-        info = await self.ytdlp_extract_info(
-            url, cookiefile=cookiefile, headers=headers, proxy=proxy
-        )
+        info = await self.ytdlp_extract_info(url, cookiefile=cookiefile, headers=headers, proxy=proxy)
         if info.duration > self.cfg.max_duration:
             raise DurationLimitException
 
@@ -346,9 +374,7 @@ class Downloader:
             # "format": f"bv[filesize<={info.duration // 10 + 10}M]+ba/b[filesize<={info.duration // 8 + 10}M]",
             # "format": "bv*[height<=720]+ba/b[height<=720]",
             "format": format or "best",
-            "postprocessors": [
-                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
-            ],
+            "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
             "http_headers": headers or self.default_headers,
         }
         if proxy:
@@ -382,9 +408,7 @@ class Downloader:
             "outtmpl": str(self.cfg.cache_dir / file_stem) + ".%(ext)s",
             "merge_output_format": "mp4",
             "format": format or None,
-            "postprocessors": [
-                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
-            ],
+            "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
             "http_headers": headers or self.default_headers,
             "quiet": True,
             "no_warnings": True,

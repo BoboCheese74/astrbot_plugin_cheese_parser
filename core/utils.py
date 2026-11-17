@@ -58,41 +58,6 @@ async def exec_ffmpeg_cmd(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg 执行失败: {error_msg}")
 
 
-async def transcode_audio_to_mp3(audio_path: Path, *, bitrate: str = "128k", keep_source: bool = True) -> Path:
-    """把 m4s / fmp4 / flac 等音频转码为 mp3"""
-    if audio_path.suffix.lower() == ".mp3":
-        return audio_path
-
-    mp3_path = audio_path.with_suffix(".mp3")
-    if mp3_path.exists() and mp3_path.stat().st_size > 0:
-        return mp3_path
-
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(audio_path),
-        "-vn",
-        "-c:a",
-        "libmp3lame",
-        "-b:a",
-        bitrate,
-        str(mp3_path),
-    ]
-    try:
-        await exec_ffmpeg_cmd(cmd)
-    except RuntimeError as e:
-        # ffmpeg 缺失或转码失败时回退原始音频，不让整条消息发送失败
-        logger.warning(f"音频转码 MP3 失败, 回退原始音频: {e}")
-        await safe_unlink(mp3_path)
-        return audio_path
-
-    logger.info(f"音频已转码: {mp3_path.name}, {fmt_size(mp3_path)}")
-    if not keep_source:
-        await safe_unlink(audio_path)
-    return mp3_path
-
-
 async def merge_av(
     *,
     v_path: Path,

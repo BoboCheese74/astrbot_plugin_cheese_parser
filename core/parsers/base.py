@@ -79,9 +79,7 @@ class BaseParser:
     @property
     def proxy(self) -> str | None:
         try:
-            parser_cfg: ParserItem = getattr(
-                self.cfg.parser, self.__class__.platform.name
-            )
+            parser_cfg: ParserItem = getattr(self.cfg.parser, self.__class__.platform.name)
             return self.cfg.proxy if parser_cfg.use_proxy else None
         except AttributeError:
             return None
@@ -117,9 +115,7 @@ class BaseParser:
     def session(self) -> ClientSession:
         """获取当前实例的 session，惰性创建"""
         if self._session is None or self._session.closed:
-            self._session = ClientSession(
-                proxy=self.proxy, timeout=ClientTimeout(total=self.cfg.common_timeout)
-            )
+            self._session = ClientSession(proxy=self.proxy, timeout=ClientTimeout(total=self.cfg.common_timeout))
         return self._session
 
     async def close_session(self) -> None:
@@ -184,9 +180,7 @@ class BaseParser:
         retries = self.cfg.download_retry_times
         for attempt in range(retries + 1):
             try:
-                async with self.session.get(
-                    url, headers=headers, allow_redirects=False, proxy=self.proxy
-                ) as resp:
+                async with self.session.get(url, headers=headers, allow_redirects=False, proxy=self.proxy) as resp:
                     if resp.status >= 400:
                         raise ClientError(f"redirect check {resp.status} {resp.reason}")
                     return resp.headers.get("Location", url)
@@ -209,13 +203,9 @@ class BaseParser:
         retries = 2
         for attempt in range(retries + 1):
             try:
-                async with self.session.get(
-                    url, headers=headers, allow_redirects=True, proxy=self.proxy
-                ) as resp:
+                async with self.session.get(url, headers=headers, allow_redirects=True, proxy=self.proxy) as resp:
                     if resp.status >= 400:
-                        raise ClientError(
-                            f"final url check {resp.status} {resp.reason}"
-                        )
+                        raise ClientError(f"final url check {resp.status} {resp.reason}")
                     return str(resp.url)
             except (ClientError, TimeoutError):
                 if attempt < retries:
@@ -235,9 +225,7 @@ class BaseParser:
 
         avatar_task = None
         if avatar_url:
-            avatar_task = self.downloader.download_img(
-                avatar_url, headers=headers or self.headers, proxy=self.proxy
-            )
+            avatar_task = self.downloader.download_img(avatar_url, headers=headers or self.headers, proxy=self.proxy)
         return Author(name=name, avatar=avatar_task, description=description)
 
     def create_video_content(
@@ -250,13 +238,9 @@ class BaseParser:
         """创建视频内容"""
         cover_task = None
         if cover_url:
-            cover_task = self.downloader.download_img(
-                cover_url, headers=headers or self.headers, proxy=self.proxy
-            )
+            cover_task = self.downloader.download_img(cover_url, headers=headers or self.headers, proxy=self.proxy)
         if isinstance(url_or_task, str):
-            url_or_task = self.downloader.download_video(
-                url_or_task, headers=headers or self.headers, proxy=self.proxy
-            )
+            url_or_task = self.downloader.download_video(url_or_task, headers=headers or self.headers, proxy=self.proxy)
 
         return VideoContent(url_or_task, cover_task, duration)
 
@@ -270,9 +254,7 @@ class BaseParser:
         """创建视频内容，允许调用方自行决定下载任务实现"""
         cover_task = None
         if cover_url:
-            cover_task = self.downloader.download_img(
-                cover_url, headers=headers or self.headers, proxy=self.proxy
-            )
+            cover_task = self.downloader.download_img(cover_url, headers=headers or self.headers, proxy=self.proxy)
         return VideoContent(path_task, cover_task, duration)
 
     def create_image_contents(
@@ -283,9 +265,7 @@ class BaseParser:
         """创建图片内容列表"""
         contents: list[ImageContent] = []
         for url in image_urls:
-            task = self.downloader.download_img(
-                url, headers=headers or self.headers, proxy=self.proxy
-            )
+            task = self.downloader.download_img(url, headers=headers or self.headers, proxy=self.proxy)
             contents.append(ImageContent(task))
         return contents
 
@@ -297,9 +277,7 @@ class BaseParser:
         """创建动态图片内容列表"""
         contents: list[DynamicContent] = []
         for url in dynamic_urls:
-            task = self.downloader.download_video(
-                url, headers=headers or self.headers, proxy=self.proxy
-            )
+            task = self.downloader.download_video(url, headers=headers or self.headers, proxy=self.proxy)
             contents.append(DynamicContent(task))
         return contents
 
@@ -308,11 +286,12 @@ class BaseParser:
         url_or_task: str | Task[Path],
         duration: float = 0.0,
         headers: dict[str, str] | None = None,
+        to_mp3: bool = False,
     ):
         """创建音频内容"""
         if isinstance(url_or_task, str):
             url_or_task = self.downloader.download_audio(
-                url_or_task, headers=headers or self.headers, proxy=self.proxy
+                url_or_task, to_mp3=to_mp3, headers=headers or self.headers, proxy=self.proxy
             )
 
         return AudioContent(url_or_task, duration)
@@ -325,9 +304,7 @@ class BaseParser:
         headers: dict[str, str] | None = None,
     ):
         """创建图文内容 图片不能为空 文字可空 渲染时文字在前 图片在后"""
-        image_task = self.downloader.download_img(
-            image_url, headers=headers or self.headers, proxy=self.proxy
-        )
+        image_task = self.downloader.download_img(image_url, headers=headers or self.headers, proxy=self.proxy)
         return GraphicsContent(image_task, text, alt)
 
     def create_file_content(
